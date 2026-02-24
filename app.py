@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import requests
+import datetime
+import calendar
 
 st.set_page_config(page_title="Gold Carry Pro", page_icon="🪙", layout="wide")
 
@@ -50,30 +52,45 @@ def get_mc_sgb_offer(nse_symbol):
         return offer if offer > 0 else ltp
     except: return 0.0
 
-# --- 2. THE RESILIENT MCX ENGINE (The Only Part We Changed) ---
+# --- 2. THE RESILIENT MCX ENGINE (The Auto-Roll Logic) ---
 @st.cache_data(ttl=600)
 def get_mc_guinea_price():
-    """Tries the Live API, then a Search Widget, then a Global Math Proxy."""
+    """Pulls MCX Best Bid, auto-rolling 6 days before the actual contract expiry."""
+    today = datetime.date.today()
+    
+    # 1. Calculate Exact Expiry Date (Last Business Day of current month)
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    expiry_date = datetime.date(today.year, today.month, last_day)
+    
+    # Adjust for weekends (MCX expires on Friday if month ends on weekend)
+    if expiry_date.weekday() == 5:    # Saturday
+        expiry_date -= datetime.timedelta(days=1)
+    elif expiry_date.weekday() == 6:  # Sunday
+        expiry_date -= datetime.timedelta(days=2)
+        
+    # 2. 6-Day Rollover Logic
+    if today > expiry_date:
+        mcx_code = "MGG01"
+    else:
+        days_to_expiry = (expiry_date - today).days
+        if days_to_expiry <= 6:
+            mcx_code = "MGG02"  # Roll to next month
+        else:
+            mcx_code = "MGG01"  # Stay in current month
+
+    # 3. Fetch the Best Bid
+    url = f"https://priceapi.moneycontrol.com/pricefeed/mcx/futures/{mcx_code}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # Attempt 1: The Moneycontrol MCX Commodity Feed
     try:
-        # Focusing on the Gold Guinea March expiry
-        url = "https://priceapi.moneycontrol.com/pricefeed/mcx/commodityfutures/GOLDGUINEA?expiry=2026-03-31"
         res = requests.get(url, headers=headers, timeout=5).json()
-        price = float(res['data'].get('pricecurrent', 0.0))
-        if price > 0: return price, "Live API"
-    except: pass
-
-    # Attempt 2: The Global Gold Math Proxy (Always works as long as Yahoo is up)
-    try:
-        gold = yf.Ticker("GC=F").fast_info['last_price']
-        usdinr = yf.Ticker("INR=X").fast_info['last_price']
-        # 8 grams + ~2.5% MCX premium/import duty buffer
-        proxy_price = (gold / 31.1035) * usdinr * 8 * 1.025
-        return proxy_price, "Proxy Est."
+        best_bid = float(res['data'].get('buyprice', 0.0))
+        
+        # Fallback to LTP if the market is closed and bid clears to 0
+        final_price = best_bid if best_bid > 0 else float(res['data'].get('pricecurrent', 0.0))
+        return final_price, f"Live {mcx_code} Bid"
     except:
-        return 0.0, "Error"
+        return 0.0, "API Error"
 
 # Pre-fetch for the UI
 live_spot = get_gold_spot()
