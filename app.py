@@ -40,7 +40,7 @@ def get_gold_spot():
     except: return 0.0
 
 @st.cache_data(ttl=600)
-def get_mc_sgb_price(nse_symbol):
+def get_mc_sgb_offer(nse_symbol):
     mc_code = MC_MAP.get(nse_symbol)
     if not mc_code: return 0.0
     url = f"https://priceapi.moneycontrol.com/pricefeed/nse/equitycash/{mc_code}"
@@ -54,43 +54,45 @@ def get_mc_sgb_price(nse_symbol):
 
 @st.cache_data(ttl=600)
 def get_mc_guinea_price():
-    url = "https://priceapi.moneycontrol.com/pricefeed/mcx/futures/MGG01" 
+    # YOUR SECRET API - Using the commodityfutures endpoint
+    url = "https://priceapi.moneycontrol.com/pricefeed/mcx/commodityfutures/GOLDGUINEA?expiry=2026-03-31"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         res = requests.get(url, headers=headers, timeout=5).json()
+        # For our short, we need the 'buyprice' (Offer) to see exit cost
         price = float(res['data'].get('buyprice', 0.0))
-        if price == 0: price = float(res['data'].get('pricecurrent', 0.0))
+        if price == 0: 
+            price = float(res['data'].get('pricecurrent', 0.0))
         return price
     except: return 0.0
 
-# --- 3. SIDEBAR (Dynamic Pivot) ---
+# --- 3. SIDEBAR (Dynamic Settings) ---
 st.sidebar.header("🎯 My Active Holding")
-# The Dropdown: This allows you to choose which SGB you currently own
-active_holding = st.sidebar.selectbox("Select Current SGB in Play", options=list(MC_MAP.keys()), index=list(MC_MAP.keys()).index("SGBJUN31I"))
+active_holding = st.sidebar.selectbox("Select Active SGB", options=list(MC_MAP.keys()), index=list(MC_MAP.keys()).index("SGBJUN31I"))
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ Portfolio Settings")
 my_sgb_qty = st.sidebar.number_input("SGB Units Held", value=24, step=8)
-my_sgb_cost = st.sidebar.number_input("SGB Avg Cost (per gram)", value=15906.67, format="%.2f")
+my_sgb_cost = st.sidebar.number_input("SGB Avg Cost", value=15906.67, format="%.2f")
 my_mcx_lots = st.sidebar.number_input("Guinea Lots Short", value=3, step=1)
-my_guinea_entry = st.sidebar.number_input("Short Entry (per lot)", value=131600.0, format="%.2f")
+my_guinea_entry = st.sidebar.number_input("Short Entry (Lot)", value=131600.0, format="%.2f")
 
-# Automatic fetching based on selection
+# Data Pulse
 live_spot = get_gold_spot()
 auto_guinea = get_mc_guinea_price()
-auto_sgb = get_mc_sgb_price(active_holding)
+auto_sgb = get_mc_sgb_offer(active_holding)
 
 st.sidebar.divider()
 st.sidebar.header("🔄 Manual Overrides")
-manual_sgb = st.sidebar.number_input("Manual Active SGB Price", value=0.0)
-manual_mcx = st.sidebar.number_input("Manual Live MCX Price", value=0.0)
+manual_sgb = st.sidebar.number_input("Override SGB Price", value=0.0, format="%.2f")
+manual_mcx = st.sidebar.number_input("Override MCX Price", value=0.0, format="%.2f")
 
 final_sgb = manual_sgb if manual_sgb > 0 else auto_sgb
 final_mcx = manual_mcx if manual_mcx > 0 else auto_guinea
 
 # --- 4. MAIN DASHBOARD ---
 st.title("🪙 Gold Guinea Carry Tracker")
-st.caption(f"Status: Syncing **{active_holding}** vs **MCX Guinea** | Refresh: 10m")
+st.caption(f"Sync: {pd.Timestamp.now().strftime('%H:%M:%S')} (NSE & MCX Live)")
 
 if final_sgb > 0 and final_mcx > 0:
     sgb_pnl = (final_sgb - my_sgb_cost) * my_sgb_qty
@@ -98,37 +100,36 @@ if final_sgb > 0 and final_mcx > 0:
     net_pnl = sgb_pnl + mcx_pnl
 
     c1, c2, c3 = st.columns(3)
-    c1.metric(f"SGB P&L ({active_holding})", f"₹{sgb_pnl:,.0f}", f"Offer: ₹{final_sgb:,.0f}")
+    c1.metric(f"SGB P&L ({active_holding})", f"₹{sgb_pnl:,.0f}", f"Rate: ₹{final_sgb:,.0f}")
     c2.metric("MCX P&L", f"₹{mcx_pnl:,.0f}", f"Lot: ₹{final_mcx:,.0f}", delta_color="inverse")
-    c3.metric("NET PROFIT", f"₹{net_pnl:,.0f}", "Live Spread")
+    c3.metric("NET PROFIT", f"₹{net_pnl:,.0f}", "Live Arbitrage")
 else:
-    st.warning("⚠️ Fetching data... Ensure your sidebar inputs are set.")
+    st.warning("⚠️ Prices pending... Check sidebar.")
 
 st.divider()
 
-# --- 5. THE DYNAMIC SWAP SCANNER ---
+# --- 5. SWAP SCANNER (With NSE Logic) ---
 st.subheader("🔍 Opportunity Scanner")
-# Focus list for scanning
-scan_list = ["SGBJUN31I", "SGBJUN27", "SGBMAY26", "SGBSEP31II", "SGBFEB32IV"]
+scan_list = ["SGBJUN31I", "SGBJUN27", "SGBMAY26", "SGBSEP31II"]
 results = []
 
 if live_spot > 0:
     st.write(f"Global Spot: **₹{live_spot:,.2f}**")
     for sgb in scan_list:
-        price = get_mc_sgb_price(sgb)
+        # Check for individual scanner overrides to fix "Sense Check" errors
+        with st.sidebar.expander(f"Sense Check: {sgb}"):
+            s_override = st.number_input(f"Actual {sgb} Offer", value=0.0, key=f"s_{sgb}")
+        
+        price = s_override if s_override > 0 else get_mc_sgb_offer(sgb)
+        
         if price > 0:
             disc = ((live_spot - price) / live_spot) * 100
-            
-            # SWAP MATH: Comparing target price against your ACTIVE HOLDING price
-            # Logic: (Current Price - Target Price) * Units
-            swap_profit = (final_sgb - price) * my_sgb_qty
-            
+            swap_benefit = (final_sgb - price) * my_sgb_qty
             results.append({
                 "Series": sgb, 
-                "Price": f"₹{price:,.0f}", 
+                "Offer": f"₹{price:,.0f}", 
                 "Discount": f"{disc:.2f}%",
-                "Swap Benefit": f"₹{swap_profit:,.0f}" if sgb != active_holding else "★ ACTIVE"
+                "Swap Profit": f"₹{swap_benefit:,.0f}" if sgb != active_holding else "★ ACTIVE"
             })
     
     st.table(pd.DataFrame(results))
-    st.info(f"💡 **Swap Benefit:** This shows the immediate cash gain if you move from **{active_holding}** to another series.")
