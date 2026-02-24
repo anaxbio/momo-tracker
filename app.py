@@ -29,7 +29,8 @@ MC_MAP = {
     "SGBNOV25IX": "SGBNO540"
 }
 
-@st.cache_data(ttl=3600)
+# UPDATED: TTL set to 600 seconds (10 minutes)
+@st.cache_data(ttl=600)
 def get_gold_spot():
     try:
         gold = yf.Ticker("GC=F").fast_info['last_price']
@@ -38,13 +39,14 @@ def get_gold_spot():
     except:
         return 0.0
 
-@st.cache_data(ttl=3600)
+# UPDATED: TTL set to 600 seconds (10 minutes)
+@st.cache_data(ttl=600)
 def get_mc_sgb_offer(nse_symbol):
     mc_code = MC_MAP.get(nse_symbol)
     if not mc_code:
         return 0.0
     url = f"https://priceapi.moneycontrol.com/pricefeed/nse/equitycash/{mc_code}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     try:
         res = requests.get(url, headers=headers, timeout=5)
         data = res.json()
@@ -87,20 +89,22 @@ if my_sgb_qty > 0 and my_mcx_lots > 0 and live_sgb_price > 0 and live_guinea_lot
     c2.metric("MCX P&L", f"₹{mcx_pnl:,.2f}", delta=f"Lot: ₹{live_guinea_lot_ltp:,.2f}", delta_color="inverse")
     c3.metric("NET PROFIT", f"₹{total_net:,.2f}", "Locked Carry")
 else:
-    st.info("👈 Please enter your details in the sidebar.")
+    st.info("👈 Please enter your details in the sidebar to calculate P&L.")
 
 st.divider()
 
 # --- 4. SCANNER ---
 st.subheader("🔍 Moneycontrol API SGB Scanner")
+# Updated Watchlist with your preferred series
 watch_list = ["SGBJUN31I", "SGBJUN27", "SGBMAY26", "SGBSEP31II"]
 results = []
 
 if live_spot > 0:
     st.write(f"*Calculated against Live Gold Spot: **₹{live_spot:,.2f} / gram***")
+    st.caption("Rates refresh every 10 minutes.")
     for sgb in watch_list:
         price = get_mc_sgb_offer(sgb)
-        if price > 0:  # <-- Fixed: Added the colon here
+        if price > 0:
             disc = ((live_spot - price) / live_spot) * 100
             results.append({
                 "Series": sgb, 
