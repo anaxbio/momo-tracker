@@ -106,29 +106,39 @@ else:
 
 st.divider()
 
-# --- 5. THE DYNAMIC SWAP SCANNER ---
+# --- 5. THE DYNAMIC SWAP SCANNER (With Manual Fixes) ---
 st.subheader("🔍 Opportunity Scanner")
+
 # Focus list for scanning
-scan_list = ["SGBJUN31I", "SGBJUN27", "SGBMAY26", "SGBSEP31II", "SGBFEB32IV"]
+scan_list = ["SGBJUN31I", "SGBJUN27", "SGBMAY26", "SGBSEP31II"]
 results = []
 
 if live_spot > 0:
-    st.write(f"Global Spot: **₹{live_spot:,.2f}**")
+    st.write(f"Global Spot: **₹{live_spot:,.2f}** | *Prices refresh every 10m*")
+    
     for sgb in scan_list:
-        price = get_mc_sgb_price(sgb)
-        if price > 0:
-            disc = ((live_spot - price) / live_spot) * 100
-            
-            # SWAP MATH: Comparing target price against your ACTIVE HOLDING price
-            # Logic: (Current Price - Target Price) * Units
-            swap_profit = (final_sgb - price) * my_sgb_qty
+        # 1. Get the API Price
+        api_price = get_mc_sgb_offer(sgb)
+        
+        # 2. Check if user wants to override THIS specific SGB in the scanner
+        # We create a small input for each SGB in the scanner (hidden in an expander)
+        with st.sidebar.expander(f"Fix {sgb} Price"):
+            override = st.number_input(f"Live {sgb} Offer", value=0.0, key=f"scan_{sgb}")
+        
+        # Use override if provided, else API price
+        current_price = override if override > 0 else api_price
+        
+        if current_price > 0:
+            disc = ((live_spot - current_price) / live_spot) * 100
+            swap_benefit = (final_sgb - current_price) * my_sgb_qty
             
             results.append({
                 "Series": sgb, 
-                "Price": f"₹{price:,.0f}", 
+                "Live Offer": f"₹{current_price:,.0f}", 
                 "Discount": f"{disc:.2f}%",
-                "Swap Benefit": f"₹{swap_profit:,.0f}" if sgb != active_holding else "★ ACTIVE"
+                "Swap Benefit": f"₹{swap_benefit:,.0f}" if sgb != active_holding else "★ ACTIVE"
             })
     
-    st.table(pd.DataFrame(results))
-    st.info(f"💡 **Swap Benefit:** This shows the immediate cash gain if you move from **{active_holding}** to another series.")
+    if results:
+        st.table(pd.DataFrame(results))
+        st.info(f"💡 **Pro-Tip:** If a price looks 'stale', use the 'Fix Price' boxes in the sidebar to enter the real Ask/Offer from your broker.")
